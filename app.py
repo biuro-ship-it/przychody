@@ -56,42 +56,52 @@ if check_password():
         del st.session_state["password_correct"]
         st.rerun()
 
-    # --- PANEL DODAWANIA ---
+    # --- PANEL DODAWANIA (Z POPRAWKĄ CZYSZCZENIA) ---
     st.subheader("➕ Nowy wpis")
-    col1, col2, col3 = st.columns([3, 1, 1])
-    with col1:
-        raw_text = st.text_input("Powiedz/Wpisz:", key="voice_input")
-    with col2:
-        typ_input = st.selectbox("Typ", ["Przychód", "Koszt"])
-    with col3:
-        st.write(" ")
-        if st.button("Zapisz", use_container_width=True):
+    
+    # Tworzymy formularz, który ułatwia czyszczenie pól
+    with st.form("my_form", clear_on_submit=True):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            raw_text = st.text_input("Powiedz/Wpisz (np. 100 obiady):", key="voice_input")
+        with col2:
+            typ_input = st.selectbox("Typ", ["Przychód", "Koszt"])
+        
+        submitted = st.form_submit_button("ZAPISZ WPIS", use_container_width=True)
+        
+        if submitted and raw_text:
             k, o, d = parse_input(raw_text)
             if k:
                 now = datetime.now()
                 run_query("INSERT INTO transakcje (data, typ_transakcji, kwota, opis, dokument, miesiac, rok) VALUES (?,?,?,?,?,?,?)",
                           (now.strftime("%Y-%m-%d %H:%M"), typ_input, k, o, d, now.strftime("%m"), now.strftime("%Y")))
-                st.success("Dodano!")
-                st.rerun()
+                st.toast(f"Dodano: {k} zł", icon='✅')
+                # Formularz sam wyczyści pole dzięki 'clear_on_submit=True'
+            else:
+                st.error("Nie znalazłem kwoty!")
 
-    # --- DANE ---
+    # --- DANE I STATYSTYKI ---
+    # (Pobieranie danych do tabeli)
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query("SELECT * FROM transakcje", conn)
     conn.close()
 
     if not df.empty:
-        # STATYSTYKI
         st.divider()
         m_now, r_now = datetime.now().strftime("%m"), datetime.now().strftime("%Y")
+        
+        # Szybkie filtry dla statystyk
         p_m = df[(df['typ_transakcji'] == 'Przychód') & (df['miesiac'] == m_now)]['kwota'].sum()
         k_m = df[(df['typ_transakcji'] == 'Koszt') & (df['miesiac'] == m_now)]['kwota'].sum()
+        
         col_a, col_b = st.columns(2)
         col_a.metric("Przychody (Miesiąc)", f"{p_m:,.2f} zł")
         col_b.metric("Koszty (Miesiąc)", f"{k_m:,.2f} zł")
 
-        # EDYCJA
+        # TABELA I EDYCJA
         st.subheader("📝 Zarządzanie")
-        edited_df = st.data_editor(df, key="editor", use_container_width=True, column_config={"id": st.column_config.Column(disabled=True)})
+        edited_df = st.data_editor(df, key="editor", use_container_width=True, 
+                                   column_config={"id": st.column_config.Column(disabled=True)})
         
         c1, c2 = st.columns(2)
         with c1:
@@ -105,8 +115,10 @@ if check_password():
                 for _, row in edited_df.iterrows():
                     run_query("UPDATE transakcje SET typ_transakcji=?, kwota=?, opis=?, dokument=? WHERE id=?", 
                               (row['typ_transakcji'], row['kwota'], row['opis'], row['dokument'], row['id']))
-                st.success("Zapisano!")
+                st.success("Zapisano zmiany!")
                 st.rerun()
         
         csv = df.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 Eksportuj CSV", csv, f"raport.csv", use_container_width=True)
+    else:
+        st.info("Baza jest pusta.")
