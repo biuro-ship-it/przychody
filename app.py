@@ -45,12 +45,10 @@ def parse_input(text):
     text_lower = text.lower()
     if "faktura" in text_lower: dokument = "Faktura"
     
-    # Szukanie liczby (obsługa przecinków i kropek)
     match = re.search(r'(\d+[.,]?\d*)', text)
     if match:
         kwota_str = match.group(1).replace(",", ".")
         kwota = float(kwota_str)
-        # Usuwanie kwoty i słów kluczowych z opisu
         opis = text.replace(match.group(1), "").replace("faktura", "").replace("paragon", "").strip()
         return kwota, opis, dokument
     return None, None, None
@@ -66,21 +64,20 @@ st.subheader("➕ Nowy wpis")
 col1, col2, col3 = st.columns([3, 1, 1])
 
 with col1:
-    raw_text = st.text_input("Powiedz/Wpisz:", placeholder="np. 200 sprzedaż towaru faktura", key="voice_input")
+    raw_text = st.text_input("Powiedz/Wpisz:", placeholder="np. 200 paliwo faktura", key="voice_input")
 with col2:
     typ_input = st.selectbox("Typ", ["Przychód", "Koszt"])
 with col3:
-    st.write(" ") # margines
-    save_btn = st.button("Zapisz wpis", use_container_width=True)
-
-if save_btn and raw_text:
-    k, o, d = parse_input(raw_text)
-    if k is not None:
-        add_transakcja(typ_input, k, o, d)
-        st.success(f"Dodano: {k} zł")
-        st.rerun()
-    else:
-        st.error("Nie znalazłem kwoty w tekście!")
+    st.write(" ")
+    if st.button("Zapisz wpis", use_container_width=True):
+        if raw_text:
+            k, o, d = parse_input(raw_text)
+            if k is not None:
+                add_transakcja(typ_input, k, o, d)
+                st.success(f"Dodano: {k} zł")
+                st.rerun()
+            else:
+                st.error("Brak kwoty!")
 
 # --- POBIERANIE DANYCH ---
 conn = sqlite3.connect(DB_NAME)
@@ -102,40 +99,48 @@ if not df.empty:
     col_b.metric("Koszty (Miesiąc)", f"{koszty_m:,.2f} zł")
     col_c.metric("Przychody (Rok)", f"{przychody_r:,.2f} zł")
 
-    # --- EDYCJA I USUWANIE ---
-    st.subheader("📝 Edycja danych")
-    st.info("Możesz edytować komórki bezpośrednio w tabeli. Aby usunąć, zaznacz wiersz i naciśnij Delete.")
+    # --- EDYCJA ---
+    st.subheader("📝 Edycja i Zarządzanie")
     
-    # Edytor danych
+    # Wyświetlamy tabelę (id jako pierwsza kolumna - LP)
     edited_df = st.data_editor(
-        df, 
+        df[['id', 'data', 'typ_transakcji', 'kwota', 'opis', 'dokument']], 
         key="data_editor", 
         num_rows="dynamic", 
         use_container_width=True,
-        column_config={"id": st.column_config.Column(disabled=True)} # Blokada edycji ID
+        column_config={"id": st.column_config.Column("ID / Lp", disabled=True)}
     )
 
-    if st.button("💾 ZAPISZ ZMIANY W BAZIE", type="primary", use_container_width=True):
-        # 1. Usuwanie rekordów, których nie ma w edited_df
-        current_ids = edited_df['id'].tolist()
-        old_ids = df['id'].tolist()
-        ids_to_delete = [idx for idx in old_ids if idx not in current_ids]
-        
-        for idx in ids_to_delete:
-            run_query("DELETE FROM transakcje WHERE id = ?", (idx,))
-        
-        # 2. Aktualizacja zmienionych rekordów
-        for index, row in edited_df.iterrows():
-            run_query('''UPDATE transakcje SET 
-                         typ_transakcji = ?, kwota = ?, opis = ?, dokument = ? 
-                         WHERE id = ?''', 
-                      (row['typ_transakcji'], row['kwota'], row['opis'], row['dokument'], row['id']))
-        
-        st.success("Baza danych została zaktualizowana!")
-        st.rerun()
+    # --- PRZYCISKI AKCJI ---
+    st.write("### Akcje na bazie danych:")
+    col_del, col_save = st.columns(2)
+
+    with col_del:
+        st.write("🗑️ Usuwanie")
+        id_to_delete = st.number_input("Wpisz ID do usunięcia:", step=1, value=0)
+        if st.button("USUŃ REKORD", type="secondary", use_container_width=True):
+            if id_to_delete in df['id'].values:
+                run_query("DELETE FROM transakcje WHERE id = ?", (int(id_to_delete),))
+                st.success(f"Usunięto rekord o ID {id_to_delete}")
+                st.rerun()
+            else:
+                st.error("Nie znaleziono takiego ID!")
+
+    with col_save:
+        st.write("💾 Zmiany w treści")
+        st.write("Zmieniłeś kwotę lub opis w tabeli wyżej?")
+        if st.button("ZAPISZ ZMIANY W TABELI", type="primary", use_container_width=True):
+            for index, row in edited_df.iterrows():
+                run_query('''UPDATE transakcje SET 
+                             typ_transakcji = ?, kwota = ?, opis = ?, dokument = ? 
+                             WHERE id = ?''', 
+                          (row['typ_transakcji'], row['kwota'], row['opis'], row['dokument'], row['id']))
+            st.success("Zmiany zapisane!")
+            st.rerun()
 
     # --- EKSPORT ---
+    st.divider()
     csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 Eksportuj do Excel (CSV)", data=csv, file_name=f"raport_{datetime.now().strftime('%Y%m')}.csv")
+    st.download_button("📥 Pobierz kopię do Excel (CSV)", data=csv, file_name=f"raport_{datetime.now().strftime('%Y%m')}.csv", use_container_width=True)
 else:
-    st.info("Baza jest pusta.")
+    st.info("Baza danych jest pusta.")
