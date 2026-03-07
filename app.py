@@ -16,13 +16,22 @@ if "password_correct" not in st.session_state:
             st.error("Błąd!")
     st.stop()
 
-# --- APLIKACJA ---
-st.title("💰 Księgowość Głosowa (Apps Script)")
+# --- FUNKCJE POMOCNICZE ---
+def get_data():
+    # Pobieranie danych z Google Sheets przez Apps Script
+    response = requests.get(st.secrets["script_url"])
+    if response.status_code == 200:
+        return pd.DataFrame(response.json())
+    return pd.DataFrame()
 
+# --- APLIKACJA ---
+st.title("💰 Księgowość Głosowa PRO")
+
+# 1. FORMULARZ DODAWANIA
 with st.form("add_form", clear_on_submit=True):
     col1, col2 = st.columns([3, 1])
     with col1:
-        raw_text = st.text_input("Dyktuj/Wpisz:")
+        raw_text = st.text_input("Dyktuj (np. 623 sprzedaż ranek faktura):")
     with col2:
         typ = st.selectbox("Typ", ["Przychód", "Koszt"])
     
@@ -31,8 +40,6 @@ with st.form("add_form", clear_on_submit=True):
         if match:
             kwota = float(match.group(1).replace(",", "."))
             now = datetime.now()
-            
-            # Dane do wysłania
             payload = {
                 "token": st.secrets["api_token"],
                 "data": now.strftime("%Y-%m-%d %H:%M"),
@@ -43,11 +50,35 @@ with st.form("add_form", clear_on_submit=True):
                 "miesiac": now.strftime("%m"),
                 "rok": now.strftime("%Y")
             }
-            
-            # Wysyłka do Google Apps Script
-            response = requests.post(st.secrets["script_url"], json=payload)
-            
-            if response.text == "Zapisano pomyślnie":
-                st.success("✅ Dane bezpiecznie wysłane do Arkusza Google!")
-            else:
-                st.error(f"Błąd: {response.text}")
+            res = requests.post(st.secrets["script_url"], json=payload)
+            if res.text == "Zapisano pomyślnie":
+                st.success("Zapisano!")
+                st.cache_data.clear() # Wymuszamy odświeżenie danych
+                st.rerun()
+
+# 2. STATYSTYKI I PODSUMOWANIA
+df = get_data()
+
+if not df.empty:
+    st.divider()
+    # Konwersja kwot na liczby
+    df['kwota'] = pd.to_numeric(df['kwota'], errors='coerce')
+    
+    m_now = datetime.now().strftime("%m")
+    r_now = datetime.now().strftime("%Y")
+
+    # Obliczenia
+    p_m = df[(df['typ'] == 'Przychód') & (df['miesiac'] == m_now)]['kwota'].sum()
+    k_m = df[(df['typ'] == 'Koszt') & (df['miesiac'] == m_now)]['kwota'].sum()
+    p_r = df[(df['typ'] == 'Przychód') & (df['rok'] == r_now)]['kwota'].sum()
+
+    # Wyświetlanie metryk
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Przychód (Miesiąc)", f"{p_m:,.2f} zł")
+    col_b.metric("Koszty (Miesiąc)", f"{k_m:,.2f} zł")
+    col_c.metric("Przychód (Rok)", f"{p_r:,.2f} zł")
+
+    st.subheader("📝 Ostatnie wpisy")
+    st.dataframe(df.tail(10), use_container_width=True)
+else:
+    st.info("Brak danych w arkuszu. Dodaj swój pierwszy przychód!")
