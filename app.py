@@ -4,13 +4,13 @@ import pandas as pd
 from datetime import datetime
 import re
 
-# --- KONFIGURACJA ---
-# Lista słów sugerujących automatycznie "Koszt"
+# --- KONFIGURACJA KOSZTÓW ---
+# Dodanie 'lena' do listy słów automatycznie wykrywanych jako koszt
 SLOWA_KOSZTY = [
     'paliwo', 'obiad', 'jedzenie', 'zakupy', 'zus', 'podatek', 'czynsz', 
     'prąd', 'gaz', 'internet', 'telefon', 'naprawa', 'serwis', 'sklep', 
-    'lena', 'lidl', 'castorama', 'orlen', 'części', 'opłata', 'rata',
-    'hobby', 'amunicja', 'sport'  # Twoje nowe słowa
+    'biedronka', 'lidl', 'castorama', 'orlen', 'części', 'opłata', 'rata',
+    'hobby', 'amunicja', 'sport', 'lena'
 ]
 
 # --- LOGOWANIE ---
@@ -33,7 +33,7 @@ def get_data():
         if response.status_code == 200:
             df = pd.DataFrame(response.json())
             if not df.empty:
-                # Konwersja i czyszczenie danych
+                # Konwersja kwot i formatowanie dat
                 df['kwota'] = pd.to_numeric(df['kwota'], errors='coerce').fillna(0)
                 df['miesiac'] = df['miesiac'].astype(str).str.split('.').str[0].str.strip()
                 df['rok'] = df['rok'].astype(str).str.split('.').str[0].str.strip()
@@ -45,52 +45,59 @@ def get_data():
 # --- APLIKACJA ---
 st.title("💰 Księgowość Głosowa AI")
 
-# Pole tekstowe do wprowadzania danych
-raw_text = st.text_input("Dyktuj (np. 150 amunicja trening):", key="raw_text_input")
-
-# Logika zgadywania typu (Przychód = 0, Koszt = 1)
-default_index = 0
-if any(word in raw_text.lower() for word in SLOWA_KOSZTY):
-    default_index = 1
-
 # --- FORMULARZ DODAWANIA ---
+# clear_on_submit=True czyści pole tekstowe po każdym zapisie
 with st.form("add_form", clear_on_submit=True):
-    typ = st.selectbox("Typ wpisu:", ["Przychód", "Koszt"], index=default_index)
+    st.write("➕ Dodaj nową operację")
     
-    if st.form_submit_button("ZAPISZ DO ARKUSZA", use_container_width=True):
-        match = re.search(r'(\d+[.,]?\d*)', raw_text)
-        if match:
-            kwota = float(match.group(1).replace(",", "."))
-            opis = raw_text.replace(match.group(1), "").strip()
-            now = datetime.now()
-            
-            payload = {
-                "token": st.secrets["api_token"],
-                "data": now.strftime("%Y-%m-%d %H:%M"),
-                "typ": typ,
-                "kwota": kwota,
-                "opis": opis,
-                "dokument": "Faktura" if "faktura" in raw_text.lower() else "Paragon",
-                "miesiac": str(now.month),
-                "rok": str(now.year)
-            }
-            
-            res = requests.post(st.secrets["script_url"], json=payload)
-            if res.text == "Zapisano pomyślnie":
-                st.toast(f"Dodano {typ}: {kwota} zł", icon="✅")
-                st.cache_data.clear()
-                st.rerun()
+    raw_text = st.text_input("Dyktuj/Wpisz (np. 50 lena prezenty):")
+    
+    # Inteligencja: Sprawdzanie czy wpis to koszt
+    default_index = 0
+    if any(word in raw_text.lower() for word in SLOWA_KOSZTY):
+        default_index = 1
+        
+    typ = st.selectbox("Kategoria (wykryta automatycznie):", ["Przychód", "Koszt"], index=default_index)
+    
+    submit_button = st.form_submit_button("ZAPISZ W ARKUSZU", use_container_width=True)
+    
+    if submit_button:
+        if raw_text:
+            match = re.search(r'(\d+[.,]?\d*)', raw_text)
+            if match:
+                kwota = float(match.group(1).replace(",", "."))
+                opis = raw_text.replace(match.group(1), "").strip()
+                now = datetime.now()
+                
+                payload = {
+                    "token": st.secrets["api_token"],
+                    "data": now.strftime("%Y-%m-%d %H:%M"),
+                    "typ": typ,
+                    "kwota": kwota,
+                    "opis": opis,
+                    "dokument": "Faktura" if "faktura" in raw_text.lower() else "Paragon",
+                    "miesiac": str(now.month),
+                    "rok": str(now.year)
+                }
+                
+                res = requests.post(st.secrets["script_url"], json=payload)
+                if res.text == "Zapisano pomyślnie":
+                    st.toast(f"✅ Zapisano: {kwota} zł jako {typ}")
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.error("Nie znalazłem kwoty!")
         else:
-            st.error("Nie znalazłem kwoty w tekście!")
+            st.warning("Pole nie może być puste!")
 
-# --- STATYSTYKI I TABELA ---
+# --- STATYSTYKI ---
 df = get_data()
 
 if not df.empty:
     st.divider()
     m_now, r_now = str(datetime.now().month), str(datetime.now().year)
 
-    # Obliczenia sumaryczne
+    # Obliczanie sum
     p_m = df[(df['typ'] == 'Przychód') & (df['miesiac'] == m_now)]['kwota'].sum()
     k_m = df[(df['typ'] == 'Koszt') & (df['miesiac'] == m_now)]['kwota'].sum()
     p_r = df[(df['typ'] == 'Przychód') & (df['rok'] == r_now)]['kwota'].sum()
@@ -100,11 +107,8 @@ if not df.empty:
     col_b.metric("Koszty (Miesiąc)", f"{k_m:,.2f} zł")
     col_c.metric("Przychód (Rok)", f"{p_r:,.2f} zł")
 
-    with st.expander("📝 Historia wpisów (od najnowszych)"):
-        # Wyświetlamy historię w odwrotnej kolejności
+    with st.expander("📝 Ostatnie operacje"):
         st.dataframe(df.iloc[::-1], use_container_width=True)
-        if st.button("🔄 Odśwież widok"):
+        if st.button("🔄 Odśwież dane"):
             st.cache_data.clear()
             st.rerun()
-else:
-    st.info("Dodaj pierwszy wpis, aby zobaczyć statystyki.")
